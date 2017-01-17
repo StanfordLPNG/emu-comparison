@@ -90,13 +90,75 @@ if ( $metadata->{ sender_side } eq q{local} ) {
 
 print STDERR qq{Experiment was from $sender => $receiver for $metadata->{ runtime } seconds.\n};
 
-for my $scheme ( keys %schemes ) {
-  print STDERR qq{Analyzing $scheme... };
+sub quantile ($@) {
+  my ( $quantile, @array ) = @_;
+  @array = sort { $a <=> $b } @array;
+  my $index = int( $#array * $quantile );
+  return $array[ $index ];
+}
 
-  for my $run_number ( sort { $a <=> $b } keys %{ $schemes{ $scheme } } ) {
-    print STDERR qq{$run_number };
-    my $log = get_file( $dirname, $schemes{ $scheme }->{ $run_number } );
+sub analyze ($) {
+  my ( $contents ) = @_;
+  my @lines = split m{\n}s, $contents;
+  my @timestamps;
+  my $total_delivery_bytes = 0;
+  my @delays;
+
+ EVENT: for ( @lines ) {
+    next EVENT if m{^#};
+    my @fields = split m{\s+}, $_;
+    my $direction = $fields[ 1 ];
+    if ( not defined $direction or ($direction ne q{+} and $direction ne q{-}) ) {
+      die qq{Invalid data-link line: $_};
+    }
+
+    next EVENT if $direction eq q{+}; # ingress, ignore
+
+    my ( $timestamp, $size, $delay ) = @fields[ 0, 2, 3 ];
+    push @timestamps, $timestamp;
+    $total_delivery_bytes += $size;
+    push @delays, $delay;
   }
 
-  print STDERR qq{done.\n};
+  # confirm expected duration
+  if ( scalar @timestamps == 0 ) {
+    print STDERR qq{(empty) };
+    return ( -1, -1 );
+  }
+
+  my $duration = ($timestamps[ -1 ] - $timestamps[ 0 ]) / 1000.0;
+  my $expected_duration = $metadata->{ runtime };
+  if ( $duration < $expected_duration * .9 ) {
+    printf STDERR q{(short duration %.0f%%) }, 100 * $duration / $expected_duration;
+    return ( -1, -1 );
+  } elsif ( $duration > $expected_duration * 1.1 ) {
+    printf STDERR q{(long duration %.0f%%) }, 100 * $duration / $expected_duration;
+    return ( -1, -1 );
+  }
+
+  # calculate throughput and delay
+  my $throughput = $total_delivery_bytes / $duration;
+  my $p95delay = quantile( .95, @delays );
+
+  return ( $throughput, $p95delay );
+}
+
+my %statistics;
+for my $scheme ( sort keys %schemes ) {
+  print STDERR qq{Analyzing $scheme... [ };
+
+  RUN: for my $run_number ( sort { $a <=> $b } keys %{ $schemes{ $scheme } } ) {
+    print STDERR qq{$run_number };
+    my $log = get_file( $dirname, $schemes{ $scheme }->{ $run_number } );
+    my ( $throughput, $p95delay ) = analyze $log;
+    if ( $throughput < 0 ) { # rejected run
+      next RUN;
+    }
+
+    push @{ $statistics{ $scheme } }, { throughput => $throughput, p95delay => $p95delay };
+  }
+
+  printf STDERR qq{] done (%d/%d used).\n},
+    scalar @{ $statistics{ $scheme } },
+    scalar ( keys %{ $schemes{ $scheme } } );
 }
