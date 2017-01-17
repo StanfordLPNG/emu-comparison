@@ -3,6 +3,7 @@
 use strict;
 use JSON;
 use POSIX;
+use IPC::Open2;
 
 # List datalink runs in a tar archive
 sub list_runs ($) {
@@ -68,6 +69,10 @@ print STDERR q{Found } . (scalar @runs ) . qq{ runs in total.\n};
 print STDERR q{Found } . (scalar keys %schemes) . q{ schemes: }
   . (join q{ }, map { qq{$_ (} . (scalar keys %{ $schemes{ $_ } }) . q{)} } keys %schemes )
   . qq{.\n};
+
+# omit some schemes from analysis
+delete $schemes{ greg_saturator };
+delete $schemes{ saturator };
 
 # Fetch metadata
 my $metadata = get_metadata $dirname;
@@ -145,7 +150,9 @@ sub analyze ($) {
   return ( $throughput, $p95delay );
 }
 
+my @all_points;
 my %statistics;
+my %median;
 for my $scheme ( sort keys %schemes ) {
   print STDERR qq{Analyzing $scheme... [ };
 
@@ -157,17 +164,70 @@ for my $scheme ( sort keys %schemes ) {
       next RUN;
     }
 
-    push @{ $statistics{ $scheme } }, { throughput => $throughput, p95delay => $p95delay };
+    my $point = { throughput => 8 * 1.e-6 * $throughput, p95delay => $p95delay };
+    push @{ $statistics{ $scheme } }, $point;
+    push @all_points, $point;
   }
 
   printf STDERR q{] done (%d/%d used)},
     scalar @{ $statistics{ $scheme } },
     scalar ( keys %{ $schemes{ $scheme } } );
 
-  my $median_throughput = quantile( 0.5, map { $_->{ throughput } } @{ $statistics{ $scheme } } );
-  my $median_delay = quantile( 0.5, map { $_->{ p95delay } } @{ $statistics{ $scheme } } );
+  $median{ $scheme }{ throughput } = quantile( 0.5, map { $_->{ throughput } } @{ $statistics{ $scheme } } );
+  $median{ $scheme }{ delay } = quantile( 0.5, map { $_->{ p95delay } } @{ $statistics{ $scheme } } );
 
   printf STDERR qq{ (median throughput: %.3f Mbit/s, p95delay: %.0f ms)\n},
-  $median_throughput * 8 * 1.e-6,
-  $median_delay;
+    $median{ $scheme }{ throughput }, $median{ $scheme }{ delay };
 }
+
+my $minimum_throughput = quantile( 0.0, map { $_->{ throughput } } @all_points );
+my $maximum_throughput = quantile( 1.0, map { $_->{ throughput } } @all_points );
+my $minimum_delay = quantile( 0.0, map { $_->{ p95delay } } @all_points );
+my $maximum_delay = quantile( 1.0, map { $_->{ p95delay } } @all_points );
+
+# expand graph
+my $display_minimum_throughput = $minimum_throughput - 0.1 * ($maximum_throughput - $minimum_throughput);
+$display_minimum_throughput = 0 if $display_minimum_throughput < 0;
+my $display_maximum_throughput = $maximum_throughput + 0.1 * ($maximum_throughput - $minimum_throughput);
+my $display_minimum_delay = 0.8 * $minimum_delay;
+my $display_maximum_delay = 1.25 * $maximum_delay;
+
+my $gnuplot_pid = open2( my $gnuplot_reader, my $gnuplot_writer, q{gnuplot} ) or die qq{gnuplot: $!};
+
+print $gnuplot_writer <<"END";
+set xlabel "delay (95th percentile ms)"
+set ylabel "throughput (Mbits/s)"
+set terminal svg size 1024,768 fsize 20 rounded solid
+set logscale x
+unset key
+set xrange [$display_maximum_delay:$display_minimum_delay] reverse
+set yrange [$display_minimum_throughput:$display_maximum_throughput]
+set xtics 2
+END
+
+my %display_name = ( copa => q{Copa}, default_tcp => q{TCP Cubic}, greg_saturator => q{GHsat},
+		     koho_cc => q{Koho}, ledbat => q{LEDBAT}, pcc => q{PCC},
+		     quic => q{QUIC Cubic}, saturator => q{YYsat},
+		     scream => q{SCReAM}, sprout => q{Sprout},
+		     vegas => q{Vegas}, verus => q{Verus}, webrtc => q{WebRTC} );
+
+# print labels
+for my $scheme ( sort keys %median ) {
+  print $gnuplot_writer qq{set label "$display_name{ $scheme }" at $median{ $scheme }{ delay }, $median{ $scheme }{ throughput } center offset -1, 1\n};
+}
+
+# print open circles for each median
+print $gnuplot_writer qq{plot "-" using 1:2 lt 6 ps 2.0 lc rgb "#000000ff"\n};
+for my $scheme ( sort keys %median ) {
+  print $gnuplot_writer qq{$median{ $scheme }{ delay } $median{ $scheme }{ throughput }\n};
+}
+
+close $gnuplot_writer or die qq{$!};
+
+while ( <$gnuplot_reader> ) {
+  print;
+}
+
+close $gnuplot_reader or die qq{$!};
+
+waitpid( $gnuplot_pid, 0 );
