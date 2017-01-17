@@ -5,20 +5,21 @@ use IPC::Open2;
 require q{graph-support.pl};
 
 # Parse arguments
-if ( scalar @ARGV != 1 ) {
-  die qq{Usage: $0 DIRNAME\n};
+if ( scalar @ARGV != 2 ) {
+  die qq{Usage: $0 DIRNAME_ORIGINAL DIRNAME_EMULATED\n};
 }
 
-my ( $dirname ) = @ARGV;
+my ( $orig_dirname, $emu_dirname ) = @ARGV;
 
-my %res = %{ analyze_resultset( $dirname ) };
+my %orig = %{ analyze_resultset( $orig_dirname ) };
+my %emu = %{ analyze_resultset( $emu_dirname ) };
 
 # expand graph
-my $display_minimum_throughput = $res{ limits }[ 0 ] - 0.1 * ($res{ limits }[ 1 ] - $res{ limits }[ 0 ]);
+my $display_minimum_throughput = $orig{ limits }[ 0 ] - 0.1 * ($orig{ limits }[ 1 ] - $orig{ limits }[ 0 ]);
 $display_minimum_throughput = 0 if $display_minimum_throughput < 0;
-my $display_maximum_throughput = $res{ limits }[ 1 ] + 0.1 * ($res{ limits }[ 1 ] - $res{ limits }[ 0 ]);
-my $display_minimum_delay = 0.8 * $res{ limits }[ 2 ];
-my $display_maximum_delay = 1.25 * $res{ limits }[ 3 ];
+my $display_maximum_throughput = $orig{ limits }[ 1 ] + 0.1 * ($orig{ limits }[ 1 ] - $orig{ limits }[ 0 ]);
+my $display_minimum_delay = 0.8 * $orig{ limits }[ 2 ];
+my $display_maximum_delay = 1.25 * $orig{ limits }[ 3 ];
 
 my $gnuplot_pid = open2( my $gnuplot_reader, my $gnuplot_writer, q{gnuplot} ) or die qq{gnuplot: $!};
 
@@ -40,14 +41,13 @@ my %display_name = ( copa => q{Copa}, default_tcp => q{TCP Cubic}, greg_saturato
 		     vegas => q{Vegas}, verus => q{Verus}, webrtc => q{WebRTC} );
 
 # print labels
-for my $scheme ( sort keys %{ $res{ median } } ) {
-  print $gnuplot_writer qq{set label "$display_name{ $scheme }" at $res{ median}{ $scheme }{ delay }, $res{ median }{ $scheme }{ throughput } center offset -1, 1\n};
+for my $scheme ( sort keys %{ $orig{ median } } ) {
+  print $gnuplot_writer qq{set label "$display_name{ $scheme }" at $orig{ median}{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput } point center offset -1, 1\n};
 }
 
-# print closed circles for each median
-print $gnuplot_writer qq{plot "-" using 1:2 lt 7 ps 2.0 lc rgb "#000000ff"\n};
-for my $scheme ( sort keys %{ $res{ median } } ) {
-  print $gnuplot_writer qq{$res{ median }{ $scheme }{ delay } $res{ median }{ $scheme }{ throughput }\n};
+print $gnuplot_writer qq{plot "-" using 1:2 lt 6 ps 2.0 lc rgb "#000000ff"\n};
+for my $scheme ( sort keys %{ $emu{ median } } ) {
+  print $gnuplot_writer qq{$emu{ median }{ $scheme }{ delay } $emu{ median }{ $scheme }{ throughput }\n};
 }
 
 close $gnuplot_writer or die qq{$!};

@@ -34,8 +34,17 @@ sub get_metadata ($) {
 
   my $doc = decode_json $contents;
 
-  if ( not defined $doc->{ local_information } ) {
+  if ( not defined $doc->{ runtime } ) {
     die qq{Invalid pantheon.json: $contents};
+  }
+
+  if ( not defined $doc->{ local_information } ) {
+    print STDERR qq{Found likely emulation resultset.\n};
+    $doc->{ local_information } = q{(emulated)};
+    $doc->{ remote_information } = q{(emulated)};
+    $doc->{ emulated } = 1;
+  } else {
+    $doc->{ emulated } = 0;
   }
 
   return $doc;
@@ -68,6 +77,13 @@ sub analyze_resultset ($) {
   # omit some schemes from analysis
   delete $schemes{ greg_saturator };
   delete $schemes{ saturator };
+  delete $schemes{ koho_cc };
+  delete $schemes{ copa };
+  for ( keys %schemes ) {
+    if ( m{_mm$} ) {
+      delete $schemes{ $_ };
+    }
+  }
 
   # Fetch metadata
   my $metadata = get_metadata $dirname;
@@ -93,14 +109,17 @@ sub analyze_resultset ($) {
 
   sub quantile ($@) {
     my ( $quantile, @array ) = @_;
+    if ( scalar @array == 0 ) {
+      die q{Can't take quantile of empty array};
+    }
     @array = sort { $a <=> $b } @array;
     my $index_low = floor( $#array * $quantile );
     my $index_high = ceil( $#array * $quantile );
     return ( $array[ $index_low ] + $array[ $index_high ] ) / 2.0;
   }
 
-  sub analyze ($$) {
-    my ( $contents, $expected_duration ) = @_;
+  sub analyze ($$$) {
+    my ( $contents, $expected_duration, $emulated ) = @_;
     my @lines = split m{\n}s, $contents;
     my @timestamps;
     my $total_delivery_bytes = 0;
@@ -110,6 +129,12 @@ sub analyze_resultset ($) {
       next EVENT if m{^#};
       my @fields = split m{\s+}, $_;
       my $direction = $fields[ 1 ];
+
+      if ( $emulated and $direction eq q{#} ) {
+	# allow, but ignore
+	next EVENT;
+      }
+
       if ( not defined $direction or ($direction ne q{+} and $direction ne q{-}) ) {
 	die qq{Invalid data-link line: $_};
       }
@@ -153,7 +178,7 @@ sub analyze_resultset ($) {
   RUN: for my $run_number ( sort { $a <=> $b } keys %{ $schemes{ $scheme } } ) {
       print STDERR qq{$run_number };
       my $log = get_file( $dirname, $schemes{ $scheme }->{ $run_number } );
-      my ( $throughput, $p95delay ) = analyze( $log, $metadata->{ runtime } );
+      my ( $throughput, $p95delay ) = analyze( $log, $metadata->{ runtime }, $metadata->{ emulated } );
       if ( $throughput < 0 ) { # rejected run
 	next RUN;
       }
