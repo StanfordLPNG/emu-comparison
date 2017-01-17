@@ -1,0 +1,136 @@
+#!/usr/bin/perl -w
+
+use strict;
+use JSON;
+
+# get subdir name from a tar name
+sub implied_directory ($) {
+  my ( $filename ) = @_;
+
+  my ( $implied_directory ) = $filename =~ m{(.*?)\.tar\.xz$};
+  if ( not defined $implied_directory ) {
+    die qq{Invalid resultset filename: $filename};
+  }
+
+  return $implied_directory;
+}
+
+# List datalink runs in a tar archive
+sub list_runs ($) {
+  my ( $filename ) = @_;
+
+  my $implied_directory = implied_directory $filename;
+
+  open( my $lister, q{-|}, qw[tar --list -f], $filename ) or die qq{$!};
+  my @ret;
+  for my $file ( <$lister> ) {
+    chomp $file;
+
+    if ( $file !~ m{^$implied_directory/} ) {
+      die qq{Invalid file in archive: $file};
+    }
+
+    $file =~ s{^$implied_directory/}{};
+
+    if ( $file =~ m{_datalink_run\d+\.log$} ) {
+      push @ret, $file;
+    }
+  }
+  close $lister or die qq{$!};
+
+  return @ret;
+}
+
+sub get_file ($$) {
+  my ( $tar_filename, $inner_filename ) = @_;
+
+  $inner_filename = (implied_directory $tar_filename) . q{/} . $inner_filename;
+
+  local $/; # so subsequent <> reads the whole file
+  open( my $getter, q{-|},
+	qw[tar --extract -f], $tar_filename,
+	qw[--to-stdout], $inner_filename ) or die qq{$!};
+  my $contents = <$getter>;
+  close $getter or die qq{$!};
+
+  return $contents;
+}
+
+sub get_metadata ($) {
+  my ( $filename ) = @_;
+  my $contents = get_file( $filename, q{pantheon_metadata.json} );
+
+  my $doc = decode_json $contents;
+
+  if ( not defined $doc->{ local_information } ) {
+    die qq{Invalid pantheon.json: $contents};
+  }
+
+  return $doc;
+}
+
+# Parse arguments
+if ( scalar @ARGV != 1 ) {
+  die qq{Usage: $0 FILENAME\n};
+}
+
+my ( $filename ) = @ARGV;
+
+# Validate filename
+if ( $filename !~ m{\.xz$} ) {
+  die qq{Filename ($filename) does not end in .xz\n};
+}
+
+print STDERR qq{Analyzing $filename.\n};
+
+# List the datalink runs
+my @runs = list_runs $filename;
+
+# Count the schemes, and runs per scheme
+my %schemes;
+for ( @runs ) {
+  my ( $scheme, $run_number ) = m{^(.*?)_datalink_run(\d+)\.log$};
+  if ( not defined $scheme or not defined $run_number ) {
+    die qq{Could not parse run filename: $_};
+  }
+
+  $schemes{ $scheme }{ $run_number } = $_;
+}
+
+print STDERR q{Found } . (scalar @runs ) . qq{ runs in total.\n};
+print STDERR q{Found } . (scalar keys %schemes) . q{ schemes: }
+  . (join q{ }, map { qq{$_ (} . (scalar keys %{ $schemes{ $_ } }) . q{)} } keys %schemes )
+  . qq{.\n};
+
+# Fetch metadata
+my $metadata = get_metadata $filename;
+
+my ( $sender, $receiver );
+if ( $metadata->{ sender_side } eq q{local} ) {
+  my $sender_interface = (defined $metadata->{ local_interface })
+    ? qq{ ($metadata->{ local_interface })} : q{};
+  my $receiver_interface = (defined $metadata->{ remote_interface })
+    ? qq{ ($metadata->{ remote_interface })} : q{};
+  $sender = qq{$metadata->{ local_information }$sender_interface};
+  $receiver = qq{$metadata->{ remote_information }$receiver_interface};
+} else {
+  my $sender_interface = (defined $metadata->{ remote_interface })
+    ? qq{ ($metadata->{ remote_interface })} : q{};
+  my $receiver_interface = (defined $metadata->{ local_interface })
+    ? qq{ ($metadata->{ local_interface })} : q{};
+  $sender = qq{$metadata->{ remote_information }$sender_interface};
+  $receiver = qq{$metadata->{ local_information }$receiver_interface};
+}
+
+print STDERR qq{Experiment was from $sender => $receiver for $metadata->{ runtime } seconds.\n};
+
+for my $scheme ( keys %schemes ) {
+  print STDERR qq{Analyzing $scheme... };
+
+  for my $run_number ( sort { $a <=> $b } keys %{ $schemes{ $scheme } } ) {
+    print STDERR qq{$run_number };
+    my $log = get_file( $filename, $schemes{ $scheme }->{ $run_number } );
+  }
+
+  print STDERR qq{done.\n};
+}
