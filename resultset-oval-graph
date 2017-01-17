@@ -3,62 +3,33 @@
 use strict;
 use JSON;
 
-# get subdir name from a tar name
-sub implied_directory ($) {
-  my ( $filename ) = @_;
-
-  my ( $implied_directory ) = $filename =~ m{(.*?)\.tar\.xz$};
-  if ( not defined $implied_directory ) {
-    die qq{Invalid resultset filename: $filename};
-  }
-
-  return $implied_directory;
-}
-
 # List datalink runs in a tar archive
 sub list_runs ($) {
-  my ( $filename ) = @_;
+  my ( $dirname ) = @_;
 
-  my $implied_directory = implied_directory $filename;
-
-  open( my $lister, q{-|}, qw[tar --list -f], $filename ) or die qq{$!};
-  my @ret;
-  for my $file ( <$lister> ) {
-    chomp $file;
-
-    if ( $file !~ m{^$implied_directory/} ) {
-      die qq{Invalid file in archive: $file};
-    }
-
-    $file =~ s{^$implied_directory/}{};
-
-    if ( $file =~ m{_datalink_run\d+\.log$} ) {
-      push @ret, $file;
-    }
-  }
-  close $lister or die qq{$!};
+  opendir( my $handle, $dirname ) or die qq{$!};
+  my @ret = grep { m{_datalink_run\d+\.log$} } readdir( $handle );
+  closedir $handle or die qq{$!};
 
   return @ret;
 }
 
 sub get_file ($$) {
-  my ( $tar_filename, $inner_filename ) = @_;
+  my ( $dirname, $inner_filename ) = @_;
 
-  $inner_filename = (implied_directory $tar_filename) . q{/} . $inner_filename;
+  $inner_filename = ($dirname) . q{/} . $inner_filename;
 
   local $/; # so subsequent <> reads the whole file
-  open( my $getter, q{-|},
-	qw[tar --extract -f], $tar_filename,
-	qw[--to-stdout], $inner_filename ) or die qq{$!};
-  my $contents = <$getter>;
-  close $getter or die qq{$!};
+  open( my $handle, q{<}, $inner_filename ) or die qq{$!};
+  my $contents = <$handle>;
+  close $handle or die qq{$!};
 
   return $contents;
 }
 
 sub get_metadata ($) {
-  my ( $filename ) = @_;
-  my $contents = get_file( $filename, q{pantheon_metadata.json} );
+  my ( $dirname ) = @_;
+  my $contents = get_file( $dirname, q{pantheon_metadata.json} );
 
   my $doc = decode_json $contents;
 
@@ -74,17 +45,12 @@ if ( scalar @ARGV != 1 ) {
   die qq{Usage: $0 FILENAME\n};
 }
 
-my ( $filename ) = @ARGV;
+my ( $dirname ) = @ARGV;
 
-# Validate filename
-if ( $filename !~ m{\.xz$} ) {
-  die qq{Filename ($filename) does not end in .xz\n};
-}
-
-print STDERR qq{Analyzing $filename.\n};
+print STDERR qq{Analyzing $dirname.\n};
 
 # List the datalink runs
-my @runs = list_runs $filename;
+my @runs = list_runs $dirname;
 
 # Count the schemes, and runs per scheme
 my %schemes;
@@ -103,7 +69,7 @@ print STDERR q{Found } . (scalar keys %schemes) . q{ schemes: }
   . qq{.\n};
 
 # Fetch metadata
-my $metadata = get_metadata $filename;
+my $metadata = get_metadata $dirname;
 
 my ( $sender, $receiver );
 if ( $metadata->{ sender_side } eq q{local} ) {
@@ -129,7 +95,7 @@ for my $scheme ( keys %schemes ) {
 
   for my $run_number ( sort { $a <=> $b } keys %{ $schemes{ $scheme } } ) {
     print STDERR qq{$run_number };
-    my $log = get_file( $filename, $schemes{ $scheme }->{ $run_number } );
+    my $log = get_file( $dirname, $schemes{ $scheme }->{ $run_number } );
   }
 
   print STDERR qq{done.\n};
