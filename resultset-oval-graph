@@ -2,12 +2,13 @@
 
 use strict;
 use JSON;
+use POSIX;
 
 # List datalink runs in a tar archive
 sub list_runs ($) {
   my ( $dirname ) = @_;
 
-  opendir( my $handle, $dirname ) or die qq{$!};
+  opendir( my $handle, $dirname ) or die qq{$dirname: $!};
   my @ret = grep { m{_datalink_run\d+\.log$} } readdir( $handle );
   closedir $handle or die qq{$!};
 
@@ -20,7 +21,7 @@ sub get_file ($$) {
   $inner_filename = ($dirname) . q{/} . $inner_filename;
 
   local $/; # so subsequent <> reads the whole file
-  open( my $handle, q{<}, $inner_filename ) or die qq{$!};
+  open( my $handle, q{<}, $inner_filename ) or die qq{$inner_filename: $!};
   my $contents = <$handle>;
   close $handle or die qq{$!};
 
@@ -42,7 +43,7 @@ sub get_metadata ($) {
 
 # Parse arguments
 if ( scalar @ARGV != 1 ) {
-  die qq{Usage: $0 FILENAME\n};
+  die qq{Usage: $0 DIRNAME\n};
 }
 
 my ( $dirname ) = @ARGV;
@@ -93,8 +94,9 @@ print STDERR qq{Experiment was from $sender => $receiver for $metadata->{ runtim
 sub quantile ($@) {
   my ( $quantile, @array ) = @_;
   @array = sort { $a <=> $b } @array;
-  my $index = int( $#array * $quantile );
-  return $array[ $index ];
+  my $index_low = floor( $#array * $quantile );
+  my $index_high = ceil( $#array * $quantile );
+  return ( $array[ $index_low ] + $array[ $index_high ] ) / 2.0;
 }
 
 sub analyze ($) {
@@ -158,7 +160,14 @@ for my $scheme ( sort keys %schemes ) {
     push @{ $statistics{ $scheme } }, { throughput => $throughput, p95delay => $p95delay };
   }
 
-  printf STDERR qq{] done (%d/%d used).\n},
+  printf STDERR q{] done (%d/%d used)},
     scalar @{ $statistics{ $scheme } },
     scalar ( keys %{ $schemes{ $scheme } } );
+
+  my $median_throughput = quantile( 0.5, map { $_->{ throughput } } @{ $statistics{ $scheme } } );
+  my $median_delay = quantile( 0.5, map { $_->{ p95delay } } @{ $statistics{ $scheme } } );
+
+  printf STDERR qq{ (median throughput: %.3f Mbit/s, p95delay: %.0f ms)\n},
+  $median_throughput * 8 * 1.e-6,
+  $median_delay;
 }
