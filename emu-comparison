@@ -28,8 +28,6 @@ my $display_maximum_throughput = 1.25 * max( @median_throughputs );
 my $display_minimum_delay = 0.8 * min( @median_delays );
 my $display_maximum_delay = 1.25 * max( @median_delays );
 
-#my $gnuplot_pid = open2( my $gnuplot_reader, my $gnuplot_writer, q{gnuplot} ) or die qq{gnuplot: $!};
-
 #my $gnuplot_writer = *STDOUT;
 
 open ( my $gnuplot_writer, q{|-}, q{gnuplot} ) or die qq{gnuplot: $!};
@@ -39,7 +37,7 @@ set xlabel "delay (95th percentile ms)"
 set ylabel "throughput (Mbits/s)"
 set terminal svg size 1024,768 fsize 20 rounded solid
 set logscale xy
-set style fill border lc rgb "#c00000ff"
+set style fill noborder
 unset key
 set xrange [$display_maximum_delay:$display_minimum_delay] reverse
 set yrange [$display_minimum_throughput:$display_maximum_throughput]
@@ -49,22 +47,32 @@ END
 
 my %display_name = ( copa => q{Copa}, default_tcp => q{TCP Cubic}, greg_saturator => q{GHsat},
 		     koho_cc => q{Koho}, ledbat => q{LEDBAT}, pcc => q{PCC},
-		     quic => q{QUIC Toy Cubic}, saturator => q{YYsat},
+		     quic => q{QUIC (toy) Cubic}, saturator => q{YYsat},
 		     scream => q{SCReAM}, sprout => q{Sprout},
 		     vegas => q{Vegas}, verus => q{Verus}, webrtc => q{WebRTC} );
+
+my %colors = ( default_tcp => q{000000},
+	       ledbat => q{e69f00},
+	       pcc => q{56b4e9},
+	       quic => q{009e73},
+	       scream => q{ff0000},
+	       sprout => q{0072b2},
+	       vegas => q{d55e00},
+	       verus => q{cc79a7},
+	       webrtc => q{0000ff} );
 
 my @plots;
 my @data_sets;
 
 # print labels
 for my $scheme ( sort keys %{ $orig{ median } } ) {
-  print $gnuplot_writer qq{set label "$display_name{ $scheme }" at $orig{ median }{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput } center\n};
+  print $gnuplot_writer qq{set label "$display_name{ $scheme }" at $orig{ median }{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput } center offset 0, -.75 font "Arial Bold" front textcolor "#$colors{$scheme}"\n};
 }
 
 # plot ellipses
 for my $scheme ( sort keys %{ $orig{ onesigma } } ) {
   print STDERR qq{Plotting ellipse for $scheme...};
-  push @plots, q{"-" with filledcurves closed fc rgb "#c00000ff"};
+  push @plots, qq{"-" with filledcurves closed fc rgb "#d0$colors{$scheme}"};
   my $point_count = scalar @{ $orig{ onesigma }{ $scheme } };
   print STDERR qq{ ($point_count points)...};
   my @data;
@@ -77,18 +85,18 @@ for my $scheme ( sort keys %{ $orig{ onesigma } } ) {
 
 # arrows
 for my $scheme ( sort keys %{ $emu{ median } } ) {
-  print $gnuplot_writer qq{set arrow back filled from $orig{ median }{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput } to $emu{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput } lw 2.5 nohead\n};
+  print $gnuplot_writer qq{set arrow back filled from $orig{ median }{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput } to $emu{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput } nohead lw 2.5 lc rgb "#$colors{$scheme}"\n};
 }
 
 # medians of real-world run
 for my $scheme ( sort keys %{ $emu{ median } } ) {
-  push @plots, q{"-" with points lt 7 ps 1.5 lc rgb "#00000080"};
+  push @plots, qq{"-" with points lt 7 ps 1.5 lc rgb "#$colors{$scheme}"};
   push @data_sets, [ [$orig{ median }{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput }] ];
 }
 
 # medians in emulation
 for my $scheme ( sort keys %{ $emu{ median } } ) {
-  push @plots, q{"-" with points lt 7 ps 1.5 lc rgb "#00800000"};
+  push @plots, qq{"-" with points lt 7 ps 1.5 lc rgb "#00$colors{$scheme}"};
   push @data_sets, [ [$emu{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput }] ];
   push @plots, q{"-" with points lt 7 ps 1.0 lc rgb "#00ffffff"};
   push @data_sets, [ [$emu{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput }] ];
@@ -104,11 +112,3 @@ for ( @data_sets ) {
 }
 
 close $gnuplot_writer or die qq{$!};
-
-#while ( <$gnuplot_reader> ) {
-#  print;
-#}
-#
-#close $gnuplot_reader or die qq{$!};
-#
-#waitpid( $gnuplot_pid, 0 );
