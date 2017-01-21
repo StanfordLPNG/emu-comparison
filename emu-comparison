@@ -2,7 +2,7 @@
 
 use strict;
 use IPC::Open2;
-use List::Util qw[min max];
+use List::Util qw[min max sum];
 require q{graph-support.pl};
 
 # Parse arguments
@@ -38,16 +38,17 @@ set ylabel "throughput (Mbits/s)"
 set terminal svg size 1024,768 fsize 20 rounded solid
 set logscale xy
 set style fill noborder
+set border 3
 unset key
 set xrange [$display_maximum_delay:$display_minimum_delay] reverse
 set yrange [$display_minimum_throughput:$display_maximum_throughput]
-set xtics (1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 10000)
-set ytics (0.1, 0.2, 0.3, 0.4, 0.5, 1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000)
+set xtics nomirror (1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 10000)
+set ytics nomirror (0.1, 0.2, 0.3, 0.4, 0.5, 1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000)
 END
 
-my %display_name = ( copa => q{Copa}, default_tcp => q{TCP Cubic}, greg_saturator => q{GHsat},
+my %display_name = ( copa => q{Copa}, default_tcp => q{Cubic}, greg_saturator => q{GHsat},
 		     koho_cc => q{Koho}, ledbat => q{LEDBAT}, pcc => q{PCC},
-		     quic => q{QUIC (toy) Cubic}, saturator => q{YYsat},
+		     quic => q{QUIC (toy)}, saturator => q{YYsat},
 		     scream => q{SCReAM}, sprout => q{Sprout},
 		     vegas => q{Vegas}, verus => q{Verus}, webrtc => q{WebRTC} );
 
@@ -55,11 +56,11 @@ my %colors = ( default_tcp => q{000000},
 	       ledbat => q{e69f00},
 	       pcc => q{56b4e9},
 	       quic => q{009e73},
-	       scream => q{ff0000},
+	       scream => q{a00000},
 	       sprout => q{0072b2},
 	       vegas => q{d55e00},
 	       verus => q{cc79a7},
-	       webrtc => q{0000ff} );
+	       webrtc => q{0000a0} );
 
 my @plots;
 my @data_sets;
@@ -72,7 +73,7 @@ for my $scheme ( sort keys %{ $orig{ median } } ) {
 # plot ellipses
 for my $scheme ( sort keys %{ $orig{ onesigma } } ) {
   print STDERR qq{Plotting ellipse for $scheme...};
-  push @plots, qq{"-" with filledcurves closed fc rgb "#d0$colors{$scheme}"};
+  push @plots, qq{"-" with filledcurves closed fc rgb "#e0$colors{$scheme}"};
   my $point_count = scalar @{ $orig{ onesigma }{ $scheme } };
   print STDERR qq{ ($point_count points)...};
   my @data;
@@ -83,10 +84,19 @@ for my $scheme ( sort keys %{ $orig{ onesigma } } ) {
   push @data_sets, \@data;
 }
 
+my @relative_difference;
+
 # arrows
 for my $scheme ( sort keys %{ $emu{ median } } ) {
   print $gnuplot_writer qq{set arrow back filled from $orig{ median }{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput } to $emu{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput } nohead lw 2.5 lc rgb "#$colors{$scheme}"\n};
+
+  my $throughput_difference = abs( $emu{ median }{ $scheme }{ throughput } - $orig{ median }{ $scheme }{ throughput } ) / $orig{ median }{ $scheme }{ throughput };
+  my $delay_difference = abs( $emu{ median }{ $scheme }{ delay } - $orig{ median }{ $scheme }{ delay } ) / $orig{ median }{ $scheme }{ delay };
+  push @relative_difference, $throughput_difference, $delay_difference;
 }
+
+my $average = sum( @relative_difference ) / @relative_difference;
+printf STDERR qq{Overall emulation score: %.2f%%\n}, 100 * $average;
 
 # medians of real-world run
 for my $scheme ( sort keys %{ $emu{ median } } ) {

@@ -24,7 +24,6 @@ sub find_labels {
   if ( $node->tag eq q{g} ) {
     for my $child ( $node->children ) {
       if ( $child->att_exists( q{font-weight} ) and $child->att( q{font-weight} ) eq q{bold} ) {
-	print STDERR qq{found it\n};
 	return $node;
       }
     }
@@ -65,6 +64,8 @@ $root->set_att( q{xmlns:inkscape}, q{http://www.inkscape.org/namespaces/inkscape
 $root->set_att( q{xmlns:sodipodi}, q{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd} );
 $labels->set_att( q{inkscape:groupmode}, q{layer} );
 $labels->set_att( q{inkscape:label}, q{Labels} );
+my $nv = $root->insert_new_elt( q{sodipodi:namedview} );
+$nv->set_att( q{inkscape:pageopacity}, q{1.0} );
 
 # lock the important parts of the plot
 lock_plots( $root );
