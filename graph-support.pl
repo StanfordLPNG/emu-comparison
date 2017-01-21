@@ -3,6 +3,7 @@
 use strict;
 use JSON;
 use POSIX;
+use IPC::Open2;
 
 # List datalink runs in a tar archive
 sub list_runs ($) {
@@ -48,6 +49,29 @@ sub get_metadata ($) {
   }
 
   return $doc;
+}
+
+sub onesigma_ellipse_loglog {
+  my ( @points ) = @_;
+
+  my $ellipse_pid = open2( my $ellipse_reader, my $ellipse_writer, q{./ellipsemaker} ) or die qq{elipsemaker: $!};
+
+  for ( @points ) {
+    printf $ellipse_writer qq{%f %f\n}, log $_->{ throughput }, log $_->{ p95delay };
+  }
+
+  close $ellipse_writer or die qq{$!};
+
+  my @ret;
+  while ( <$ellipse_reader> ) {
+    chomp;
+    my ( $logthroughput, $logdelay ) = split /\s+/, $_;
+    push @ret, { throughput => exp( $logthroughput ), p95delay => exp( $logdelay ) };
+  }
+
+  waitpid( $ellipse_pid, 0 );
+
+  return \@ret;
 }
 
 sub analyze_resultset ($) {
@@ -169,11 +193,10 @@ sub analyze_resultset ($) {
     return ( $throughput, $p95delay );
   }
 
-  my @all_points;
-  my %statistics;
-  my %median;
+  my %ret;
   for my $scheme ( sort keys %schemes ) {
     print STDERR qq{Analyzing $scheme... [ };
+    my @all_points;
 
   RUN: for my $run_number ( sort { $a <=> $b } keys %{ $schemes{ $scheme } } ) {
       print STDERR qq{$run_number };
@@ -184,31 +207,22 @@ sub analyze_resultset ($) {
       }
 
       my $point = { throughput => 8 * 1.e-6 * $throughput, p95delay => $p95delay };
-      push @{ $statistics{ $scheme } }, $point;
+      push @{ $ret{ statistics }{ $scheme } }, $point;
       push @all_points, $point;
     }
 
     printf STDERR q{] done (%d/%d used)},
-      scalar @{ $statistics{ $scheme } },
+      scalar @{ $ret{ statistics }{ $scheme } },
       scalar ( keys %{ $schemes{ $scheme } } );
 
-    $median{ $scheme }{ throughput } = quantile( 0.5, map { $_->{ throughput } } @{ $statistics{ $scheme } } );
-    $median{ $scheme }{ delay } = quantile( 0.5, map { $_->{ p95delay } } @{ $statistics{ $scheme } } );
+    $ret{ median }{ $scheme }{ throughput } = quantile( 0.5, map { $_->{ throughput } } @{ $ret{ statistics }{ $scheme } } );
+    $ret{ median }{ $scheme }{ delay } = quantile( 0.5, map { $_->{ p95delay } } @{ $ret{ statistics }{ $scheme } } );
 
     printf STDERR qq{ (median throughput: %.3f Mbit/s, p95delay: %.0f ms)\n},
-      $median{ $scheme }{ throughput }, $median{ $scheme }{ delay };
+      $ret{ median }{ $scheme }{ throughput }, $ret{ median }{ $scheme }{ delay };
+
+    $ret{ onesigma }{ $scheme } = onesigma_ellipse_loglog( @all_points );
   }
-
-  my $minimum_throughput = quantile( 0.0, map { $_->{ throughput } } @all_points );
-  my $maximum_throughput = quantile( 1.0, map { $_->{ throughput } } @all_points );
-  my $minimum_delay = quantile( 0.0, map { $_->{ p95delay } } @all_points );
-  my $maximum_delay = quantile( 1.0, map { $_->{ p95delay } } @all_points );
-
-  my %ret;
-  $ret{ all_points } = \@all_points;
-  $ret{ statistics } = \%statistics;
-  $ret{ median } = \%median;
-  $ret{ limits } = [ $minimum_throughput, $maximum_throughput, $minimum_delay, $maximum_delay ];
 
   return \%ret;
 }
