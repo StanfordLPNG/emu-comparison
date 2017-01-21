@@ -75,15 +75,22 @@ for my $scheme ( sort keys %{ $orig{ onesigma } } ) {
   push @data_sets, \@data;
 }
 
+# arrows
+for my $scheme ( sort keys %{ $emu{ median } } ) {
+  print $gnuplot_writer qq{set arrow back filled from $orig{ median }{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput } to $emu{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput } lw 2.5 nohead\n};
+}
+
 # medians of real-world run
 for my $scheme ( sort keys %{ $emu{ median } } ) {
   push @plots, q{"-" with points lt 7 ps 1.5 lc rgb "#00000080"};
-  push @data_sets, [ [$orig{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput }] ];
+  push @data_sets, [ [$orig{ median }{ $scheme }{ delay }, $orig{ median }{ $scheme }{ throughput }] ];
 }
 
 # medians in emulation
 for my $scheme ( sort keys %{ $emu{ median } } ) {
-  push @plots, q{"-" with points lt 6 ps 2.0 lc rgb "#00800000"};
+  push @plots, q{"-" with points lt 7 ps 1.5 lc rgb "#00800000"};
+  push @data_sets, [ [$emu{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput }] ];
+  push @plots, q{"-" with points lt 7 ps 1.0 lc rgb "#00ffffff"};
   push @data_sets, [ [$emu{ median }{ $scheme }{ delay }, $emu{ median }{ $scheme }{ throughput }] ];
 }
 
